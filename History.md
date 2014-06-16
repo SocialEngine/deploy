@@ -1,3 +1,8 @@
+0.7.0 / 2014-06-16
+==================
+
+    * Forked from [visionmedia/deploy](https://github.com/visionmedia/deploy)
+    * Added post-checkout hook
 
 0.6.0 / 2012-06-19 
 ==================

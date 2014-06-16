@@ -7,7 +7,7 @@
 # https://github.com/visionmedia/deploy
 #
 
-VERSION="0.6.0"
+VERSION="0.7.0"
 CONFIG=./deploy.conf
 LOG=/tmp/deploy.log
 TEST=1
@@ -166,7 +166,7 @@ hook() {
   local cmd=`config_get $hook`
   if test -n "$cmd"; then
     log "executing $hook \`$cmd\`"
-    run "cd $path/current; \
+    run "cd $path/source; \
       SHARED=\"$path/shared\" \
       $cmd 2>&1 | tee -a $LOG; \
       exit \${PIPESTATUS[0]}"
@@ -220,10 +220,31 @@ deploy() {
     test $? -eq 0 || abort failed to determine latest tag
   fi
 
+  # Make new release folder
+  prevReleaseDir=`run "cd $path && mktemp -d release-XXXXXX"`
+  test $? -eq 0 || abort making prevReleaseDir failed
+  
+  # Now nuke it, because of how cp works.
+  run "cd $path && rm -r $prevReleaseDir"
+  test $? -eq 0 || abort removing prevReleaseDir failed
+  
+  # Create a copy of the repo
+  log copy repo to $prevReleaseDir 
+  run "cd $path && cp -r source $prevReleaseDir"
+  test $? -eq 0 || abort copy source failed
+  
+  # Link current to previous release
+  run "ln -sfn $path/$prevReleaseDir $path/current"
+  test $? -eq 0 || abort symlink failed
+
   # reset HEAD
   log resetting HEAD to $ref
   run "cd $path/source && git reset --hard $ref"
   test $? -eq 0 || abort git reset failed
+
+  # Run post-checkout hook
+  log Running post-checkout hook
+  hook post-checkout || abort post-checkout hook failed
 
   # link current
   run "ln -sfn $path/source $path/current"
@@ -246,6 +267,10 @@ deploy() {
   else
     log ignoring tests
   fi
+  
+  # nuke previous release
+  log removing previous release
+  run "rm -rf $path/$prevReleaseDir"
 
   # done
   log successfully deployed $ref
