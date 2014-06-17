@@ -107,16 +107,24 @@
 
 ## Hooks
 
-  All hooks are arbitrary commands, executed relative to `path/current`,
-  aka the previous deployment for `pre-deploy`, and the new deployment
-  for `post-deploy`. Of course you may specify absolute paths as well.
+  All hooks are arbitrary commands.
 
 ### pre-deploy
-
+  
+  Runs on the previous deploy, before any modifications have been made to the system.
+  
       pre-deploy ./bin/something
+
+### post-checkout
+
+  Runs on new deploy of the code, before it is linked to current.
+    
+      post-checkout ./bin/build-externals
 
 ### post-deploy
 
+  Runs on new deploy of the code, after it is linked to current.
+  
       post-deploy ./bin/restart
 
 ### test
