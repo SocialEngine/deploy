@@ -84,6 +84,20 @@ config_section() {
 }
 
 #
+# interpolate: Returns the value of the env var held by variable
+#
+
+interpolate() {
+  if [ `echo $1 | cut -c 1` = '$' ]
+    then
+      eval echo $1
+    else
+      echo $1
+  fi
+}
+
+
+#
 # Get config value by <key>.
 #
 
@@ -92,15 +106,7 @@ config_get() {
   if [ -n "$key" ]
     then
       local value=`grep "^\[$ENV" -A 20 $CONFIG | grep "^$key" | head -n 1 | cut -d ' ' -f 2-999`
-      if [ -n "$value" ]
-      then
-        if [ `echo $value | cut -c 1` = '$' ]
-        then
-          eval echo $value
-        else
-          echo $value
-        fi
-      fi
+      test -n "$value" && interpolate "$value"
   fi
 }
 
