@@ -199,7 +199,7 @@ hook() {
 setup() {
   local path=`config_get path`
   local repo=`config_get repo`
-  run "mkdir -p $path/{shared/{logs,pids},source}"
+  run "mkdir -p $path/{shared/{logs,pids}}"
   test $? -eq 0 || abort setup paths failed
   log running setup
 
@@ -272,7 +272,7 @@ deploy() {
   test $? -eq 0 || abort symlink failed
 
   # deploy log
-  run "cd $path/source && \
+  run "cd $path/current && \
       echo \`git rev-parse --short HEAD\` \
       >> $path/.deploys"
   test $? -eq 0 || abort deploy log append failed
@@ -309,7 +309,7 @@ deploy() {
 
 current_commit() {
   local path=`config_get path`
-  run "cd $path/source && \
+  run "cd $path/current && \
       git rev-parse --short HEAD"
 }
 
