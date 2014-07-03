@@ -175,12 +175,14 @@ config() {
 
 hook() {
   test -n "$1" || abort hook name required
+  test -n "$2" || abort release path required
   local hook=$1
+  local releasePath=$2
   local path=`config_get path`
   local cmd=`config_get $hook`
   if test -n "$cmd"; then
     log "executing $hook \`$cmd\`"
-    run "cd $path/source; \
+    run "cd $path/$releasePath; \
       SHARED=\"$path/shared\" \
       $cmd 2>&1 | tee -a $LOG; \
       exit \${PIPESTATUS[0]}"
@@ -203,7 +205,7 @@ setup() {
 
   # Get a release folder
   releaseDir=`run "cd $path && mktemp -d release-XXXXXX"`
-  run "cd $path && rm -r $nextReleaseDir"
+  run "cd $path && rm -r $releaseDir"
 
   log cloning $repo into $releaseDir
   run "git clone $repo $path/$releaseDir"
@@ -222,7 +224,11 @@ deploy() {
   local path=`config_get path`
   log deploying
 
-  hook pre-deploy || abort pre-deploy hook failed
+  # Get the current release path
+  currentReleasePath=`run "cd $path/current && pwd -P"`
+  test -n "$currentReleasePath" || abort could not get previous release path
+
+  hook pre-deploy current || abort pre-deploy hook failed
 
   # Make new release folder
   nextReleaseDir=`run "cd $path && mktemp -d release-XXXXXX"`
@@ -234,7 +240,7 @@ deploy() {
 
   # Create a copy of the repo
   log copy repo to $nextReleaseDir
-  run "cd $path && cp -r current $nextReleaseDir"
+  run "cd $path && cp --dereference -r current $nextReleaseDir"
   test $? -eq 0 || abort copy source failed
 
   # fetch source
@@ -259,7 +265,7 @@ deploy() {
 
   # Run post-checkout hook
   log Running post-checkout hook
-  hook post-checkout || abort post-checkout hook failed
+  hook post-checkout $nextReleaseDir || abort post-checkout hook failed
 
   # link current
   run "ln -sfn $path/$nextReleaseDir $path/current"
@@ -271,10 +277,16 @@ deploy() {
       >> $path/.deploys"
   test $? -eq 0 || abort deploy log append failed
 
-  hook post-deploy || abort post-deploy hook failed
+  if hook post-deploy current; then
+    log post-deploy ran successfully
+  else
+    log post-deploy failed, restoring old link
+    run "ln -sfn $currentReleasePath $path/current"
+    abort post-deploy hook failed
+  fi
 
   if test $TEST -eq 1; then
-    hook test
+    hook test current
     if test $? -ne 0; then
       log tests failed, reverting deploy
       quickly_revert_to 1 && log "revert complete" && exit
@@ -284,10 +296,8 @@ deploy() {
   fi
 
   # nuke previous release
-  currentReleaseDir=`run "cd $path/current && pwd -P"`
-  test -n "$currentReleaseDir" || abort could not get previous release path
-  log removing previous release $currentReleaseDir
-  run "rm -rf $currentReleaseDir"
+  log removing previous release $currentReleasePath
+  run "rm -rf $currentReleasePath"
 
   # done
   log successfully deployed $ref
