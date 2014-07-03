@@ -175,12 +175,14 @@ config() {
 
 hook() {
   test -n "$1" || abort hook name required
+  test -n "$2" || abort release path required
   local hook=$1
+  local releasePath=$2
   local path=`config_get path`
   local cmd=`config_get $hook`
   if test -n "$cmd"; then
     log "executing $hook \`$cmd\`"
-    run "cd $path/source; \
+    run "cd $path/$releasePath; \
       SHARED=\"$path/shared\" \
       $cmd 2>&1 | tee -a $LOG; \
       exit \${PIPESTATUS[0]}"
@@ -197,13 +199,18 @@ hook() {
 setup() {
   local path=`config_get path`
   local repo=`config_get repo`
-  run "mkdir -p $path/{shared/{logs,pids},source}"
+  run "mkdir -p $path/{shared/{logs,pids}}"
   test $? -eq 0 || abort setup paths failed
   log running setup
-  log cloning $repo
-  run "git clone $repo $path/source"
+
+  # Get a release folder
+  releaseDir=`run "cd $path && mktemp -d release-XXXXXX"`
+  run "cd $path && rm -r $releaseDir"
+
+  log cloning $repo into $releaseDir
+  run "git clone $repo $path/$releaseDir"
   test $? -eq 0 || abort failed to clone
-  run "ln -sfn $path/source $path/current"
+  run "ln -sfn $path/$releaseDir $path/current"
   test $? -eq 0 || abort symlink failed
   log setup complete
 }
@@ -217,63 +224,69 @@ deploy() {
   local path=`config_get path`
   log deploying
 
-  hook pre-deploy || abort pre-deploy hook failed
+  # Get the current release path
+  currentReleasePath=`run "cd $path/current && pwd -P"`
+  test -n "$currentReleasePath" || abort could not get previous release path
+
+  hook pre-deploy current || abort pre-deploy hook failed
+
+  # Make new release folder
+  nextReleaseDir=`run "cd $path && mktemp -d release-XXXXXX"`
+  test $? -eq 0 || abort making nextReleaseDir failed
+
+  # Now nuke it, because of how cp works.
+  run "cd $path && rm -r $nextReleaseDir"
+  test $? -eq 0 || abort removing nextReleaseDir failed
+
+  # Create a copy of the repo
+  log copy repo to $nextReleaseDir
+  run "cd $path && cp --dereference -r current $nextReleaseDir"
+  test $? -eq 0 || abort copy source failed
 
   # fetch source
   log fetching updates
-  run "cd $path/source && git fetch --all"
+  run "cd $path/$nextReleaseDir && git fetch --all"
   test $? -eq 0 || abort fetch failed
 
   # latest tag
   if test -z "$ref"; then
     log fetching latest tag
-    ref=`run "cd $path/source && git for-each-ref refs/tags \
+    ref=`run "cd $path/$nextReleaseDir && git for-each-ref refs/tags \
       --sort=-*authordate \
       --format='%(refname)' \
       --count=1 | cut -d '/' -f 3"`
     test $? -eq 0 || abort failed to determine latest tag
   fi
 
-  # Make new release folder
-  prevReleaseDir=`run "cd $path && mktemp -d release-XXXXXX"`
-  test $? -eq 0 || abort making prevReleaseDir failed
-  
-  # Now nuke it, because of how cp works.
-  run "cd $path && rm -r $prevReleaseDir"
-  test $? -eq 0 || abort removing prevReleaseDir failed
-  
-  # Create a copy of the repo
-  log copy repo to $prevReleaseDir 
-  run "cd $path && cp -r source $prevReleaseDir"
-  test $? -eq 0 || abort copy source failed
-  
-  # Link current to previous release
-  run "ln -sfn $path/$prevReleaseDir $path/current"
-  test $? -eq 0 || abort symlink failed
-
   # reset HEAD
-  log resetting HEAD to $ref
-  run "cd $path/source && git reset --hard $ref"
+  log resetting HEAD to $ref in $nextReleaseDir
+  run "cd $path/$nextReleaseDir && git reset --hard $ref"
   test $? -eq 0 || abort git reset failed
 
   # Run post-checkout hook
   log Running post-checkout hook
-  hook post-checkout || abort post-checkout hook failed
+  hook post-checkout $nextReleaseDir || abort post-checkout hook failed
 
   # link current
-  run "ln -sfn $path/source $path/current"
+  run "ln -sfn $path/$nextReleaseDir $path/current"
   test $? -eq 0 || abort symlink failed
 
   # deploy log
-  run "cd $path/source && \
+  run "cd $path/current && \
       echo \`git rev-parse --short HEAD\` \
       >> $path/.deploys"
   test $? -eq 0 || abort deploy log append failed
 
-  hook post-deploy || abort post-deploy hook failed
+  if hook post-deploy current; then
+    log post-deploy ran successfully
+  else
+    log post-deploy failed, restoring old link
+    run "ln -sfn $currentReleasePath $path/current"
+    abort post-deploy hook failed
+  fi
 
   if test $TEST -eq 1; then
-    hook test
+    hook test current
     if test $? -ne 0; then
       log tests failed, reverting deploy
       quickly_revert_to 1 && log "revert complete" && exit
@@ -281,10 +294,10 @@ deploy() {
   else
     log ignoring tests
   fi
-  
+
   # nuke previous release
-  log removing previous release
-  run "rm -rf $path/$prevReleaseDir"
+  log removing previous release $currentReleasePath
+  run "rm -rf $currentReleasePath"
 
   # done
   log successfully deployed $ref
@@ -296,7 +309,7 @@ deploy() {
 
 current_commit() {
   local path=`config_get path`
-  run "cd $path/source && \
+  run "cd $path/current && \
       git rev-parse --short HEAD"
 }
 
